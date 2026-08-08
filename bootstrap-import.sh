@@ -18,18 +18,20 @@ fi
 
 log(){ echo "[bootstrap-import] $*"; }
 
-# 1) 백엔드가 응답할 때까지 대기 (최대 5분)
+# 1+2) 백엔드 API가 실제로 응답하고 로그인이 될 때까지 재시도 (최대 ~10분).
+# 주의: 프론트(nginx)의 '/'는 백엔드가 아직 안 떠도 200을 주므로, '/'로 준비여부를
+# 판단하면 안 된다(그 시점 로그인 API는 502를 낸다). 반드시 로그인 API가 apikey를
+# 돌려줄 때까지 재시도해야 t3.small처럼 백엔드/opensearch가 늦게 뜨는 환경에서도 붙는다.
+APIKEY=""
 for i in $(seq 1 60); do
-  curl -sf "$SHUFFLE_URL/" >/dev/null 2>&1 && break
-  sleep 5
+  RESP="$(curl -s -X POST "$SHUFFLE_URL/api/v1/login" -H 'Content-Type: application/json' \
+    -d "{\"username\":\"$USERNAME\",\"password\":\"$PASSWORD\"}")"
+  APIKEY="$(printf '%s' "$RESP" | python3 -c 'import sys,json;print(json.load(sys.stdin).get("apikey",""))' 2>/dev/null || true)"
+  if [ -n "$APIKEY" ]; then log "로그인 성공 (시도 ${i}회)"; break; fi
+  log "백엔드 준비 대기중... (시도 ${i}/60)"
+  sleep 10
 done
-
-# 2) 로그인 -> apikey
-RESP="$(curl -s -X POST "$SHUFFLE_URL/api/v1/login" -H 'Content-Type: application/json' \
-  -d "{\"username\":\"$USERNAME\",\"password\":\"$PASSWORD\"}")"
-APIKEY="$(printf '%s' "$RESP" | python3 -c 'import sys,json;print(json.load(sys.stdin).get("apikey",""))' 2>/dev/null || true)"
-if [ -z "$APIKEY" ]; then log "로그인/APIKEY 실패. 응답: $RESP"; log "UI(Workflows->Import)로 수동 import 하세요."; exit 1; fi
-log "로그인 성공"
+if [ -z "$APIKEY" ]; then log "로그인/APIKEY 실패(10분 초과). 마지막 응답: $(printf '%s' "$RESP" | head -c 200)"; log "UI(Workflows->Import)로 수동 import 하세요."; exit 1; fi
 
 # 3) 기존 워크플로 목록 (중복 import 방지)
 EXISTING="$(curl -s "$SHUFFLE_URL/api/v1/workflows" -H "Authorization: Bearer $APIKEY")"

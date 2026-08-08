@@ -20,6 +20,12 @@ if [ -f "$ENV_FILE" ]; then
   DISCORD_WEBHOOK_URL="$(grep -E '^DISCORD_WEBHOOK_URL=' "$ENV_FILE" | cut -d= -f2-)"
 fi
 
+# Shuffle은 import마다 workflow/webhook id를 새로 생성한다. 하지만 /hooks/new payload의
+# id는 우리가 지정할 수 있으므로, 웹훅 hook을 이 고정 id로 만든다 → Wazuh가 하드코딩한
+# URL(webhook_<이 id>)과 항상 일치. 이 값은 infra의 wazuh 모듈 shuffle_webhook_hook_id와
+# 반드시 동일해야 한다.
+FIXED_HOOK_ID="8e84e673-e96b-4807-956d-92a05fb06ed3"
+
 log(){ echo "[bootstrap-import] $*"; }
 
 # 1) 백엔드 준비 대기. 주의: 로그인(/login)은 Shuffle의 레이트리밋 대상이라
@@ -85,14 +91,30 @@ PYEOF
   NEWID="$(printf '%s' "$R" | python3 -c 'import sys,json;print(json.load(sys.stdin).get("id",""))' 2>/dev/null || true)"
   log "  -> workflow id=$NEWID"
 
-  # 웹훅 트리거 start + 워크플로 저장(활성화) 시도
-  HOOKID="$(python3 -c 'import json,sys
+  # 웹훅 활성화(Running). Shuffle은 /hooks/new 로 hook을 만들면서 start시킨다
+  # (구버전 경로 /hooks/webhook_<id>/start 는 이 버전에서 404). payload의 id를
+  # FIXED_HOOK_ID로 지정해 Wazuh 하드코딩 URL과 일치시킨다. start(진입 액션 id)와
+  # 웹훅 이름/환경은 워크플로 JSON에서 읽는다(import해도 보존됨). workflow는 방금 import된 NEWID.
+  META="$(python3 -c 'import json,sys
 d=json.load(open(sys.argv[1]))
+name="Webhook"; env="Shuffle"
 for t in d.get("triggers",[]):
-    if t.get("trigger_type")=="WEBHOOK": print(t.get("id","")); break' "$f" 2>/dev/null || true)"
-  if [ -n "$HOOKID" ]; then
-    curl -s -b "$COOKIE_JAR" "$SHUFFLE_URL/api/v1/hooks/webhook_$HOOKID/start" >/dev/null 2>&1 || true
-    log "  -> webhook start 시도 (hook=$HOOKID)"
+    if t.get("trigger_type")=="WEBHOOK":
+        name=t.get("name") or name; env=t.get("environment") or env
+print((d.get("start","") or "")+"\t"+name+"\t"+env)' "$f" 2>/dev/null || true)"
+  START="$(printf '%s' "$META" | cut -f1)"
+  WHNAME="$(printf '%s' "$META" | cut -f2)"
+  WHENV="$(printf '%s' "$META" | cut -f3)"
+  if [ -n "$NEWID" ] && [ -n "$START" ]; then
+    HRESP="$(curl -s -b "$COOKIE_JAR" -X POST "$SHUFFLE_URL/api/v1/hooks/new" -H 'Content-Type: application/json' \
+      -d "{\"name\":\"$WHNAME\",\"type\":\"webhook\",\"id\":\"$FIXED_HOOK_ID\",\"auth\":\"\",\"custom_response\":\"\",\"environment\":\"$WHENV\",\"start\":\"$START\",\"version\":\"v1\",\"version_timeout\":15,\"workflow\":\"$NEWID\"}")"
+    if printf '%s' "$HRESP" | grep -q '"success"[: ]*true'; then
+      log "  -> 웹훅 자동 start 완료 (hook id=$FIXED_HOOK_ID)"
+    else
+      log "  -> 웹훅 start 실패: $(printf '%s' "$HRESP" | head -c 150) — UI에서 Start 필요"
+    fi
+  else
+    log "  -> NEWID/start 없음 → 웹훅 자동 start 생략 (UI에서 Start 필요)"
   fi
 done
 log "완료. UI에서 워크플로가 Enable 인지, Webhook 이 Running 인지 확인하세요."

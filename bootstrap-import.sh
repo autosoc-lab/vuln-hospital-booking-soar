@@ -18,20 +18,34 @@ fi
 
 log(){ echo "[bootstrap-import] $*"; }
 
-# 1+2) 백엔드 API가 실제로 응답하고 로그인이 될 때까지 재시도 (최대 ~10분).
-# 주의: 프론트(nginx)의 '/'는 백엔드가 아직 안 떠도 200을 주므로, '/'로 준비여부를
-# 판단하면 안 된다(그 시점 로그인 API는 502를 낸다). 반드시 로그인 API가 apikey를
-# 돌려줄 때까지 재시도해야 t3.small처럼 백엔드/opensearch가 늦게 뜨는 환경에서도 붙는다.
+# 1) 백엔드 준비 대기. 주의: 로그인(/login)은 Shuffle의 레이트리밋 대상이라
+#    준비 확인용으로 반복 호출하면 'Too many requests'를 유발한다. 그래서 준비여부는
+#    레이트리밋 없는 GET 엔드포인트로 '백엔드가 502를 안 낼 때까지'만 확인한다.
+#    (프론트 nginx의 '/'는 백엔드가 안 떠도 200을 주므로 준비 판단에 쓰면 안 됨.)
+log "백엔드 준비 대기..."
+for i in $(seq 1 90); do
+  CODE="$(curl -s -o /dev/null -w '%{http_code}' "$SHUFFLE_URL/api/v1/getenvironments" 2>/dev/null || echo 000)"
+  if [ "$CODE" != "502" ] && [ "$CODE" != "000" ] && [ "$CODE" != "504" ]; then
+    log "백엔드 응답 시작 (HTTP $CODE, ${i}회)"; break
+  fi
+  sleep 10
+done
+
+# 2) 로그인 -> apikey. 로그인은 레이트리밋이 있으므로 간격을 넉넉히(20s) 두고 소수만
+#    재시도하고, 'Too many requests'가 오면 60초 백오프해서 리밋이 풀리길 기다린다.
 APIKEY=""
-for i in $(seq 1 60); do
+for i in $(seq 1 12); do
   RESP="$(curl -s -X POST "$SHUFFLE_URL/api/v1/login" -H 'Content-Type: application/json' \
     -d "{\"username\":\"$USERNAME\",\"password\":\"$PASSWORD\"}")"
   APIKEY="$(printf '%s' "$RESP" | python3 -c 'import sys,json;print(json.load(sys.stdin).get("apikey",""))' 2>/dev/null || true)"
   if [ -n "$APIKEY" ]; then log "로그인 성공 (시도 ${i}회)"; break; fi
-  log "백엔드 준비 대기중... (시도 ${i}/60)"
-  sleep 10
+  if printf '%s' "$RESP" | grep -qi "too many requests"; then
+    log "로그인 레이트리밋 감지 — 60초 대기 후 재시도 (${i}/12)"; sleep 60
+  else
+    log "로그인 대기중 (${i}/12): $(printf '%s' "$RESP" | head -c 120)"; sleep 20
+  fi
 done
-if [ -z "$APIKEY" ]; then log "로그인/APIKEY 실패(10분 초과). 마지막 응답: $(printf '%s' "$RESP" | head -c 200)"; log "UI(Workflows->Import)로 수동 import 하세요."; exit 1; fi
+if [ -z "$APIKEY" ]; then log "로그인/APIKEY 실패. 마지막 응답: $(printf '%s' "$RESP" | head -c 200)"; log "UI(Workflows->Import)로 수동 import 하세요."; exit 1; fi
 
 # 3) 기존 워크플로 목록 (중복 import 방지)
 EXISTING="$(curl -s "$SHUFFLE_URL/api/v1/workflows" -H "Authorization: Bearer $APIKEY")"

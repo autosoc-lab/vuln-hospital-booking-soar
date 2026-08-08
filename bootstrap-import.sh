@@ -10,10 +10,14 @@ WF_DIR="$HERE/workflows"
 ENV_FILE="$HERE/.env"
 SHUFFLE_URL="http://localhost:3001"
 
-USERNAME="admin"; PASSWORD=""
+USERNAME="admin"; PASSWORD=""; DISCORD_WEBHOOK_URL=""
 if [ -f "$ENV_FILE" ]; then
   U="$(grep -E '^SHUFFLE_DEFAULT_USERNAME=' "$ENV_FILE" | cut -d= -f2-)"; [ -n "$U" ] && USERNAME="$U"
   PASSWORD="$(grep -E '^SHUFFLE_DEFAULT_PASSWORD=' "$ENV_FILE" | cut -d= -f2-)"
+  # Discord 웹훅 URL(시크릿). shuffle 모듈 user_data가 tfvars 값을 .env에 넣어준다.
+  # 값이 있으면 import 직전 워크플로 JSON의 Discord url(인증필드)에 주입한다 — 인증필드는
+  # export 시 값이 비워지므로, 재배포마다 이 방식으로 다시 채워야 Discord 알림이 나간다.
+  DISCORD_WEBHOOK_URL="$(grep -E '^DISCORD_WEBHOOK_URL=' "$ENV_FILE" | cut -d= -f2-)"
 fi
 
 log(){ echo "[bootstrap-import] $*"; }
@@ -59,9 +63,25 @@ for f in "$WF_DIR"/*.json; do
     log "이미 존재: $NAME (skip)"; continue
   fi
   log "import: $NAME"
+  SRC="$f"
+  if [ -n "$DISCORD_WEBHOOK_URL" ]; then
+    PATCHED="$(mktemp)"
+    N="$(python3 - "$f" "$DISCORD_WEBHOOK_URL" "$PATCHED" <<'PYEOF'
+import json,sys
+src,url,out=sys.argv[1],sys.argv[2],sys.argv[3]
+d=json.load(open(src)); n=0
+for a in d.get("actions",[]):
+    if (a.get("app_name") or "").lower()=="discord":
+        for prm in a.get("parameters",[]):
+            if prm.get("name")=="url": prm["value"]=url; n+=1
+json.dump(d,open(out,"w")); print(n)
+PYEOF
+)"
+    if [ "$N" != "0" ] && [ -n "$N" ]; then SRC="$PATCHED"; log "  -> Discord url 주입 (${N}곳)"; fi
+  fi
   R="$(curl -s -b "$COOKIE_JAR" -X POST "$SHUFFLE_URL/api/v1/workflows" \
         -H 'Content-Type: application/json' \
-        --data-binary "@$f")"
+        --data-binary "@$SRC")"
   NEWID="$(printf '%s' "$R" | python3 -c 'import sys,json;print(json.load(sys.stdin).get("id",""))' 2>/dev/null || true)"
   log "  -> workflow id=$NEWID"
 

@@ -31,24 +31,25 @@ for i in $(seq 1 90); do
   sleep 10
 done
 
-# 2) 로그인 -> apikey. 로그인은 레이트리밋이 있으므로 간격을 넉넉히(20s) 두고 소수만
-#    재시도하고, 'Too many requests'가 오면 60초 백오프해서 리밋이 풀리길 기다린다.
-APIKEY=""
+# 2) 로그인. 이 Shuffle 버전은 응답 바디에 apikey를 주지 않고(로그인은 success:true만
+#    반환) 세션 쿠키로 인증한다 — UI 로그인과 동일. 그래서 쿠키를 항아리에 저장해
+#    이후 요청에 재사용한다. 레이트리밋 주의: 넉넉한 간격 + 'Too many requests' 시 60s 백오프.
+COOKIE_JAR="$(mktemp)"
+LOGGED_IN=""
 for i in $(seq 1 12); do
-  RESP="$(curl -s -X POST "$SHUFFLE_URL/api/v1/login" -H 'Content-Type: application/json' \
+  RESP="$(curl -s -c "$COOKIE_JAR" -X POST "$SHUFFLE_URL/api/v1/login" -H 'Content-Type: application/json' \
     -d "{\"username\":\"$USERNAME\",\"password\":\"$PASSWORD\"}")"
-  APIKEY="$(printf '%s' "$RESP" | python3 -c 'import sys,json;print(json.load(sys.stdin).get("apikey",""))' 2>/dev/null || true)"
-  if [ -n "$APIKEY" ]; then log "로그인 성공 (시도 ${i}회)"; break; fi
+  if printf '%s' "$RESP" | grep -q '"success":[[:space:]]*true'; then LOGGED_IN=1; log "로그인 성공 (시도 ${i}회)"; break; fi
   if printf '%s' "$RESP" | grep -qi "too many requests"; then
     log "로그인 레이트리밋 감지 — 60초 대기 후 재시도 (${i}/12)"; sleep 60
   else
     log "로그인 대기중 (${i}/12): $(printf '%s' "$RESP" | head -c 120)"; sleep 20
   fi
 done
-if [ -z "$APIKEY" ]; then log "로그인/APIKEY 실패. 마지막 응답: $(printf '%s' "$RESP" | head -c 200)"; log "UI(Workflows->Import)로 수동 import 하세요."; exit 1; fi
+if [ -z "$LOGGED_IN" ]; then log "로그인 실패. 마지막 응답: $(printf '%s' "$RESP" | head -c 200)"; log "UI(Workflows->Import)로 수동 import 하세요."; exit 1; fi
 
 # 3) 기존 워크플로 목록 (중복 import 방지)
-EXISTING="$(curl -s "$SHUFFLE_URL/api/v1/workflows" -H "Authorization: Bearer $APIKEY")"
+EXISTING="$(curl -s -b "$COOKIE_JAR" "$SHUFFLE_URL/api/v1/workflows")"
 
 # 4) workflows/*.json import
 shopt -s nullglob
@@ -58,8 +59,8 @@ for f in "$WF_DIR"/*.json; do
     log "이미 존재: $NAME (skip)"; continue
   fi
   log "import: $NAME"
-  R="$(curl -s -X POST "$SHUFFLE_URL/api/v1/workflows" \
-        -H "Authorization: Bearer $APIKEY" -H 'Content-Type: application/json' \
+  R="$(curl -s -b "$COOKIE_JAR" -X POST "$SHUFFLE_URL/api/v1/workflows" \
+        -H 'Content-Type: application/json' \
         --data-binary "@$f")"
   NEWID="$(printf '%s' "$R" | python3 -c 'import sys,json;print(json.load(sys.stdin).get("id",""))' 2>/dev/null || true)"
   log "  -> workflow id=$NEWID"
@@ -70,7 +71,7 @@ d=json.load(open(sys.argv[1]))
 for t in d.get("triggers",[]):
     if t.get("trigger_type")=="WEBHOOK": print(t.get("id","")); break' "$f" 2>/dev/null || true)"
   if [ -n "$HOOKID" ]; then
-    curl -s "$SHUFFLE_URL/api/v1/hooks/webhook_$HOOKID/start" -H "Authorization: Bearer $APIKEY" >/dev/null 2>&1 || true
+    curl -s -b "$COOKIE_JAR" "$SHUFFLE_URL/api/v1/hooks/webhook_$HOOKID/start" >/dev/null 2>&1 || true
     log "  -> webhook start 시도 (hook=$HOOKID)"
   fi
 done

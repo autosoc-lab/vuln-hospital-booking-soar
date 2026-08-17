@@ -81,9 +81,9 @@ Webhook 노드 뒤에 **Shuffle Tools** 앱의 **Filter** 액션을 연결해서
 4. 영향도 확인: 문서 버킷의 `GetObject`, `PutObject`, SSE-C, lifecycle 변경 이벤트를 확인한다.
 5. 통보: Discord/케이스에 룰 ID, 에이전트, 인스턴스 ID, 버킷명, 조치 결과를 기록한다.
 
-Terraform apply 후 Shuffle EC2에는 `soar-response-api.service`가 함께 배포된다. Wazuh
-integration은 `level >= 15`인 SSH 침해 확증 룰만 이 API로 전달하고, API가 다음 헬퍼를
-실행한다.
+Terraform apply 후 Shuffle EC2에는 `soar-response-api.service`가 함께 배포된다. Shuffle
+GUI의 `SOAR_Response_API` 노드는 `level >= 15` 이벤트에서 이 API를 호출한다. API는 다시
+룰 ID를 확인한 뒤 다음 헬퍼를 실행한다.
 
 ```bash
 sudo /opt/soar/scripts/respond-ssh-compromise.sh

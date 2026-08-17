@@ -89,9 +89,10 @@ infra의 `modules/shuffle`은 Shuffle EC2 instance profile에 다음 최소 권�
 - 문서 버킷 영향도 확인용 `s3:Get*`, `s3:ListBucket`, `cloudtrail:LookupEvents`
 
 호스트에서 즉시 실행 가능한 대응 헬퍼는 `scripts/respond-ssh-compromise.sh`다. Terraform은
-같은 EC2에 `scripts/soar-response-api.py`를 systemd 서비스로 띄운다. Wazuh integration은
-기존 Shuffle 웹훅 전송 후, `level >= 15`인 SSH 침해 확증 룰만 이 내부 API에 추가 POST하여
-자동 조치를 실행한다.
+같은 EC2에 `scripts/soar-response-api.py`를 systemd 서비스로 띄운다. 자동 조치는 Shuffle
+GUI의 `Wazuh Alert Router` 워크플로 안에 있는 `SOAR_Response_API` 노드가 내부 API를
+호출하면서 실행된다. 따라서 워크플로 Executions 화면에서 Discord 알림과 SOAR API 호출
+단계를 함께 확인할 수 있다.
 수동 재실행이 필요하면 Shuffle EC2에서 아래처럼 실행할 수 있다.
 
 ```bash

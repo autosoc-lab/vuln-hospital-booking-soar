@@ -40,10 +40,13 @@ VPC Flow Logs, GuardDuty)가 전부 Wazuh를 거쳐 같은 웹훅 하나로 들�
 |---|---|---|---|---|
 | `ssrf` (100011) | 10 | SSRF 의심 (내부망/메타데이터 주소 요청) | 앱 로그(agent) | Slack #soc-alerts 알림 |
 | `ssrf,attack_scenario` (100012) | 12 | 알려진 취약 엔드포인트 대상 SSRF | 앱 로그 | Slack, 심각도 High |
-| `ssrf,credential_access,critical` (100013/100014) | 14~15 | IMDS 자격증명 탈취 (100014=200 응답으로 확증) | 앱 로그 | **케이스 생성 + 긴급 알림 + 사람 승인 후 세션 revoke** (2단계 구현됨, [6-2](#6-2-rule-100014-브랜치--세션-revoke-사람-승인-필수) 참고) |
+| `ssrf,credential_access,critical` (100013) | 14 | IMDS 자격증명 경로 조회 시도 (200 확증 전) | 앱 로그 | **케이스 생성 + 긴급 알림 + 사람 승인 후 세션 revoke** (2단계 구현됨, [6-2](playbook_ex.md#6-2-rule-100013100033-브랜치--세션-revoke-high-사람-승인-필수) 참고) |
+| `ssrf,credential_access,critical` (100014) | 15 | IMDS 자격증명 탈취 확증 (200 응답) | 앱 로그 | **케이스 생성 + 긴급 알림 + 완전자동 세션 revoke** (2단계 구현됨, [6-3](playbook_ex.md#6-3-rule-100014100034-브랜치--세션-revoke-critical-완전자동) 참고) |
 | `s3_exfil` (100021) | 12 | 문서 버킷 대량 다운로드(sync 유출 의심) | CloudTrail(S3 데이터 이벤트) | 케이스 생성 + 알림 |
-| `s3_ransomware` (100030/100031) | 10~12 | SSE-C 재암호화 / lifecycle 자동삭제 설정 (Codefinger 패턴) | CloudTrail | 100030: 케이스 생성 + 긴급 알림 / **100031: 완전자동 lifecycle 원복** (2단계 구현됨, [6-1](#6-1-rule-100031-브랜치--lifecycle-원복-완전자동-승인-불필요) 참고) |
-| `s3_ransomware,attack_scenario,critical` (100032) | 15 | 같은 버킷에서 SSE-C 재암호화 직후 lifecycle 변경 - 상관분석 확증 (정상 운영으로는 안 나오는 조합) | CloudTrail | **완전자동 lifecycle 원복 + 긴급 알림** — 100031과 동일 조치, [6-1](#6-1-rule-100031-브랜치--lifecycle-원복-완전자동-승인-불필요) 참고 (같은 로그가 100031 대신 100032로 발화하므로 Filter가 둘 다 잡아야 함) |
+| `s3_ransomware` (100030/100031) | 10~12 | SSE-C 재암호화 / lifecycle 자동삭제 설정 (Codefinger 패턴) | CloudTrail | 100030: 케이스 생성 + 긴급 알림 / **100031: 완전자동 lifecycle 원복** (2단계 구현됨, [6-1](playbook_ex.md#6-1-rule-100031-브랜치--lifecycle-원복-완전자동-승인-불필요) 참고) |
+| `s3_ransomware,attack_scenario,critical` (100032) | 15 | 같은 버킷에서 SSE-C 재암호화 직후 lifecycle 변경 - 상관분석 확증 (정상 운영으로는 안 나오는 조합) | CloudTrail | **완전자동 lifecycle 원복 + 긴급 알림** — 100031과 동일 조치, [6-1](playbook_ex.md#6-1-rule-100031-브랜치--lifecycle-원복-완전자동-승인-불필요) 참고 (같은 로그가 100031 대신 100032로 발화하므로 Filter가 둘 다 잡아야 함) |
+| `s3_ransomware,s3_exfil` (100033) | 13 | SSE-C 커스텀 키로 문서 버킷 객체 조회 - 반출 정황(단독 발화) | CloudTrail | **케이스 생성 + 긴급 알림 + 사람 승인 후 세션 revoke** (2단계 구현됨, [6-2](playbook_ex.md#6-2-rule-100013100033-브랜치--세션-revoke-high-사람-승인-필수) 참고) |
+| `s3_ransomware,attack_scenario,critical` (100034) | 15 | 재암호화→lifecycle→SSE-C 반출까지 전 단계 상관분석 확증 | CloudTrail | **완전자동 세션 revoke + 긴급 알림** (2단계 구현됨, [6-3](playbook_ex.md#6-3-rule-100014100034-브랜치--세션-revoke-critical-완전자동) 참고) |
 | `log_tampering` (100040~100045) | 9~12 | CloudTrail/Flow Logs 중지·삭제·정책변경 | CloudTrail | **케이스 생성 + Slack 긴급 알림** (방어회피 = 이미 침해 진행 중일 가능성 높음) |
 | `vpcflow,recon` (100052) | 10 | 포트스캔/정찰 의심 | VPC Flow Logs | Slack 알림 |
 | `vpcflow,exfil` (100054) | 10 | 대용량 외부 반출 의심 | VPC Flow Logs | 케이스 생성 + Slack |
